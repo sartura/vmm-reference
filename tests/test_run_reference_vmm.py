@@ -77,7 +77,6 @@ UBUNTU_KERNEL_DISK_PAIRS = [
     (default_ubuntu_bzimage(), default_disk()),
 ]
 
-
 """
 The following methods would be nice to have a part of class revolving
 around the vmm process. Let's figure out how to proceed here as part
@@ -86,7 +85,7 @@ and run locally.
 """
 
 
-def start_vmm_process(kernel_path, disk_path=None, num_vcpus=1, mem_size_mib=1024):
+def start_vmm_process(kernel_path, disk_path=None, num_vcpus=1, mem_size_mib=1024, serial_in="", serial_out=""):
     # Kernel config
     cmdline = "console=ttyS0 i8042.nokbd reboot=t panic=1 pci=off"
 
@@ -101,7 +100,8 @@ def start_vmm_process(kernel_path, disk_path=None, num_vcpus=1, mem_size_mib=102
         "--kernel", "cmdline={},path={},himem_start={}".format(
             cmdline, kernel_path, himem_start
         ),
-        "--vcpu", "num={}".format(num_vcpus)
+        "--vcpu", "num={}".format(num_vcpus),
+        "--serial", "serial_input={},serial_output={}".format(serial_in, serial_out)
     ]
     tmp_file_path = None
 
@@ -139,6 +139,14 @@ def shutdown(vmm_process):
     vmm_process.wait(timeout=3)
 
 
+def shutdown_piped(vmm_process, vmm_input_fd):
+    os.write(vmm_input_fd, b'reboot -f\n')
+
+    # If the process hasn't ended within 3 seconds, this will raise a
+    # TimeoutExpired exception and fail the test.
+    vmm_process.wait(timeout=3)
+
+
 def setup_stdout_nonblocking(vmm_process):
     # We'll need to do non-blocking I/O with the underlying sub-process since
     # we cannot use `communicate`, because `communicate` would close the
@@ -164,6 +172,34 @@ def expect_string(vmm_process, expected_string, timeout=TEST_TIMEOUT):
     while not found:
         try:
             data = os.read(vmm_process.stdout.fileno(), 4096)
+            all_data += data
+            for line in all_data.split(b'\r\n'):
+                if expected_string in line.decode():
+                    found = True
+                    return line.decode()
+            # Whatever remains is collected in `all_data`.
+            all_data = line
+        except BlockingIOError as _:
+            # Raised on `EWOULDBLOCK`, so it's better to wait for sometime before retrying
+            time.sleep(1)
+            now = time.time()
+            if now - then > giveup_after:
+                raise TimeoutError(
+                    "Timed out {} waiting for {}".format(now - then, expected_string))
+        except Exception as _:
+            raise
+
+def expect_string_piped(vmm_output_fd, expected_string, timeout=TEST_TIMEOUT):
+
+    # No. of seconds after which we'll give up
+    giveup_after = timeout
+    then = time.time()
+    found = False
+    # This is required because the pattern we are expecting might get split across two reads
+    all_data = bytes()
+    while not found:
+        try:
+            data = os.read(vmm_output_fd, 4096)
             all_data += data
             for line in all_data.split(b'\r\n'):
                 if expected_string in line.decode():
@@ -370,3 +406,32 @@ def test_reference_vmm_mem(kernel):
         expect_mem(vmm_process, expected_mem_mib)
 
         shutdown(vmm_process)
+
+
+@pytest.mark.parametrize("kernel", KERNELS_INITRAMFS)
+def test_serial_console_piping(kernel, tmp_path):
+    """Start the reference VMM with piped input/output and verify that it works."""
+
+    pipe_dir = tmp_path/"named_pipes"
+    pipe_dir.mkdir()
+
+    vmm_process, _ = start_vmm_process(
+                        kernel,
+                        serial_in=pipe_dir/"in",
+                        serial_out=pipe_dir/"out")
+
+    time.sleep(1)
+
+    vmm_input_fd = os.open(pipe_dir/"in", os.O_WRONLY)
+
+    time.sleep(1)
+
+    vmm_output_fd = os.open(pipe_dir/"out", os.O_RDONLY | os.O_NONBLOCK)
+
+    # Poll process for new output until we find the hello world message.
+    # If we do not find the expected message, this loop will not break and the
+    # test will fail when the timeout expires.
+    expected_string = "Hello, world, from the rust-vmm reference VMM!"
+    expect_string_piped(vmm_output_fd, expected_string)
+
+    shutdown_piped(vmm_process, vmm_input_fd)
