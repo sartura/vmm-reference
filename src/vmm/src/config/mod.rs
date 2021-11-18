@@ -10,9 +10,12 @@ use std::result;
 use linux_loader::cmdline::Cmdline;
 
 use arg_parser::CfgArgParser;
+
+use devices::legacy::console::ConsoleType;
+
 use builder::Builder;
 
-use super::{DEFAULT_KERNEL_CMDLINE, DEFAULT_KERNEL_LOAD_ADDR};
+use super::{DEFAULT_KERNEL_CMDLINE, DEFAULT_KERNEL_LOAD_ADDR, DEFAULT_CONSOLE_TYPE};
 
 mod arg_parser;
 mod builder;
@@ -238,13 +241,40 @@ impl TryFrom<&str> for NetConfig {
     }
 }
 
+/// Enum that determines the serial type
+#[derive(Clone, Debug, PartialEq)]
+pub enum SerialType {
+    /// Default console type (STDIN/STDOUT)
+    Standard,
+    /// Named pipe
+    Pipe,
+    /// Unix socket
+    Socket,
+    /// TCP socket
+    TCP
+}
+
+impl SerialType {
+    /// Unwrap the C interface wrapper to the native Rust struct.
+    pub fn unwrap(&self) -> ConsoleType {
+        match self {
+            SerialType::Standard => ConsoleType::Standard,
+            SerialType::Pipe => ConsoleType::Pipe,
+            SerialType::Socket => ConsoleType::Socket,
+            SerialType::TCP => ConsoleType::TCP,
+        }
+    }
+}
+
 /// Serial communication configuration
 #[derive(Clone, Debug, PartialEq)]
 pub struct SerialConfig {
     /// Optional path to pipe the input of the guest OS.
-    pub serial_input: Option<PathBuf>,
+    pub serial_input: Option<String>,
     /// Optional path to pipe the output of the guest OS.
-    pub serial_output: Option<PathBuf>,
+    pub serial_output: Option<String>,
+    /// Type of serial interface to use 
+    pub serial_type: SerialType,
 }
 
 impl Default for SerialConfig {
@@ -252,6 +282,7 @@ impl Default for SerialConfig {
         SerialConfig {
             serial_input: None,
             serial_output: None,
+            serial_type: SerialType::Standard,
         }
     }
 }
@@ -262,15 +293,26 @@ impl TryFrom<&str> for SerialConfig {
     fn try_from(serial_console_str: &str) -> Result<Self, Self::Error> {
         let mut arg_parser = CfgArgParser::new(serial_console_str);
 
+        let serial_type = arg_parser
+            .value_of::<String>("serial_type")
+            .map_err(ConversionError::new_serial)?
+            .unwrap_or_else(|| DEFAULT_CONSOLE_TYPE.to_string());
+
+        let serial_type = match Some(&*serial_type) {
+            Some("standard") => SerialType::Standard,
+            Some("socket") => SerialType::Socket,
+            Some("pipe") => SerialType::Pipe,
+            Some("tcp") => SerialType::TCP,
+            _ => SerialType::Standard,
+        };
+
         let serial_input = arg_parser
             .value_of::<String>("serial_input")
-            .map_err(ConversionError::new_serial)?
-            .map(PathBuf::from);
+            .map_err(ConversionError::new_serial)?;
 
         let serial_output = arg_parser
             .value_of::<String>("serial_output")
-            .map_err(ConversionError::new_serial)?
-            .map(PathBuf::from);
+            .map_err(ConversionError::new_serial)?;
 
         arg_parser
             .all_consumed()
@@ -278,6 +320,7 @@ impl TryFrom<&str> for SerialConfig {
         Ok(SerialConfig {
             serial_input,
             serial_output,
+            serial_type,
         })
     }
 }
@@ -442,47 +485,62 @@ mod tests {
     #[test]
     fn test_serial_config() {
         // Testing the positive case with both input and output
-        let serial_str = r#"serial_input=/foo/bar/in,serial_output=/foo/bar/out"#;
+        let serial_str = r#"serial_type=pipe,serial_input=/foo/bar/in,serial_output=/foo/bar/out"#;
         let serial_cfg = SerialConfig::try_from(serial_str).unwrap();
         let expected_cfg = SerialConfig {
-            serial_input: Some(PathBuf::from(String::from("/foo/bar/in"))),
-            serial_output: Some(PathBuf::from(String::from("/foo/bar/out"))),
+            serial_input: Some(String::from("/foo/bar/in")),
+            serial_output: Some(String::from("/foo/bar/out")),
+            serial_type: SerialType::Pipe,
         };
         assert_eq!(serial_cfg, expected_cfg);
 
         // Testing that the config is succesfully created with empty str for input
-        let serial_str_empty_in = r#"serial_input=,serial_output=/foo/bar/out"#;
+        let serial_str_empty_in = r#"serial_type=standard,serial_input=,serial_output=/foo/bar/out"#;
         let serial_cfg_empty_in = SerialConfig::try_from(serial_str_empty_in).unwrap();
         let expected_cfg_empty_in = SerialConfig {
             serial_input: None,
-            serial_output: Some(PathBuf::from(String::from("/foo/bar/out"))),
+            serial_output: Some(String::from("/foo/bar/out")),
+            serial_type: SerialType::Standard,
         };
         assert_eq!(serial_cfg_empty_in, expected_cfg_empty_in);
 
         // Testing that the config is succesfully created with empty str for output
-        let serial_str_empty_out = r#"serial_input=/foo/bar/in,serial_output="#;
+        let serial_str_empty_out = r#"serial_type=socket,serial_input=/foo/bar/in,serial_output="#;
         let serial_cfg_empty_out = SerialConfig::try_from(serial_str_empty_out).unwrap();
         let expected_cfg_empty_out = SerialConfig {
-            serial_input: Some(PathBuf::from(String::from("/foo/bar/in"))),
+            serial_input: Some(String::from("/foo/bar/in")),
             serial_output: None,
+            serial_type: SerialType::Socket,
         };
         assert_eq!(serial_cfg_empty_out, expected_cfg_empty_out);
 
         // Testing that the config is succesfully created without input
-        let serial_str_no_in = r#"serial_output=/foo/bar/out"#;
+        let serial_str_no_in = r#"serial_type=pipe,serial_output=/foo/bar/out"#;
         let serial_cfg_no_in = SerialConfig::try_from(serial_str_no_in).unwrap();
         let expected_cfg_no_in = SerialConfig {
             serial_input: None,
-            serial_output: Some(PathBuf::from(String::from("/foo/bar/out"))),
+            serial_output: Some(String::from("/foo/bar/out")),
+            serial_type: SerialType::Pipe,
         };
         assert_eq!(serial_cfg_no_in, expected_cfg_no_in);
+
+        // Testing that the config is succesfully created without output
+        let serial_str_no_out = r#"serial_type=pipe,serial_input=/foo/bar/in"#;
+        let serial_cfg_no_out = SerialConfig::try_from(serial_str_no_out).unwrap();
+        let expected_cfg_no_out = SerialConfig {
+            serial_input: Some(String::from("/foo/bar/in")),
+            serial_output: None,
+            serial_type: SerialType::Pipe,
+        };
+        assert_eq!(serial_cfg_no_out, expected_cfg_no_out);
 
         // Testing that the config is succesfully created without output
         let serial_str_no_out = r#"serial_input=/foo/bar/in"#;
         let serial_cfg_no_out = SerialConfig::try_from(serial_str_no_out).unwrap();
         let expected_cfg_no_out = SerialConfig {
-            serial_input: Some(PathBuf::from(String::from("/foo/bar/in"))),
+            serial_input: Some(String::from("/foo/bar/in")),
             serial_output: None,
+            serial_type: SerialType::Standard,
         };
         assert_eq!(serial_cfg_no_out, expected_cfg_no_out);
 
@@ -492,6 +550,7 @@ mod tests {
         let expected_cfg_empty = SerialConfig {
             serial_input: None,
             serial_output: None,
+            serial_type: SerialType::Standard,
         };
         assert_eq!(serial_cfg_empty, expected_cfg_empty);
 

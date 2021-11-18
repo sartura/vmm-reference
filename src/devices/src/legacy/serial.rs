@@ -152,7 +152,7 @@ mod tests {
         let interrupt_evt = EventFdTrigger::new(libc::EFD_NONBLOCK).unwrap();
         let mut serial_console = SerialWrapper {
             serial: Serial::new(interrupt_evt, sink()),
-            console_reader: ConsoleReaderWrapper::new(None),
+            console_reader: ConsoleReaderWrapper::new(None, ConsoleType::Standard),
         };
         let valid_iir_offset = 2;
 
@@ -184,7 +184,7 @@ mod tests {
         let interrupt_evt = EventFdTrigger::new(libc::EFD_NONBLOCK).unwrap();
         let mut serial_console = SerialWrapper {
             serial: Serial::new(interrupt_evt, sink()),
-            console_reader: ConsoleReaderWrapper::new(None),
+            console_reader: ConsoleReaderWrapper::new(None, ConsoleType::Standard),
         };
         let data = [0];
 
@@ -206,7 +206,7 @@ mod tests {
         let interrupt_evt = EventFdTrigger::new(libc::EFD_NONBLOCK).unwrap();
         let mut serial_console = SerialWrapper {
             serial: Serial::new(interrupt_evt, sink()),
-            console_reader: ConsoleReaderWrapper::new(None),
+            console_reader: ConsoleReaderWrapper::new(None, ConsoleType::Standard),
         };
         let write_data = [5];
         let mut read_data = [0];

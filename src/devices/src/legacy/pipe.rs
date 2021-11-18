@@ -4,14 +4,13 @@
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Write};
 use std::os::unix::io::{AsRawFd, RawFd};
-use std::path::PathBuf;
 
-/// A wrapper structure around that provides basic read functionality backed by
-/// a named pipe implementation.
+/// A wrapper structure that provides basic read functionality backed by a named
+/// pipe implementation.
 pub struct PipeReaderWrapper(File);
 
 impl PipeReaderWrapper {
-    pub fn new(buf: PathBuf) -> std::io::Result<PipeReaderWrapper> {
+    pub fn new(buf: String) -> std::io::Result<PipeReaderWrapper> {
         match utils::mkfifo(&buf, libc::S_IRWXO) {
             Ok(_) => Ok(PipeReaderWrapper(
                 OpenOptions::new()
@@ -43,12 +42,12 @@ impl AsRawFd for PipeReaderWrapper {
     }
 }
 
-/// A wrapper structure around that provides basic write functionality backed by
-/// a named pipe implementation.
-pub struct PipeWriterWrapper(PathBuf);
+/// A wrapper structure that provides basic write functionality backed by a named
+/// pipe implementation.
+pub struct PipeWriterWrapper(String);
 
 impl PipeWriterWrapper {
-    pub fn new(buf: PathBuf) -> std::io::Result<PipeWriterWrapper> {
+    pub fn new(buf: String) -> std::io::Result<PipeWriterWrapper> {
         match utils::mkfifo(&buf, libc::S_IRWXO) {
             Ok(_) => Ok(PipeWriterWrapper(buf)),
             Err(fifo_err) => match fifo_err {
@@ -85,7 +84,7 @@ mod tests {
     use crate::legacy::pipe::{PipeReaderWrapper, PipeWriterWrapper};
     use std::fs::{remove_file, File};
     use std::io::{Read, Write};
-    use std::path::{Path, PathBuf};
+    use std::path::{Path};
 
     #[test]
     fn test_pipe_read() {
@@ -101,7 +100,7 @@ mod tests {
             drop(output);
         });
         let mut read_buffer: [u8; 1] = [0];
-        let input_pipe_path = PathBuf::from("test_in");
+        let input_pipe_path = String::from("test_in");
         let mut input = PipeReaderWrapper::new(input_pipe_path).unwrap();
         let res = input.read(&mut read_buffer);
         assert!(res.is_ok());
@@ -128,7 +127,7 @@ mod tests {
             assert!(res.is_ok());
         });
         let write_buffer: [u8; 1] = [1];
-        let output_pipe_path = PathBuf::from("test_out");
+        let output_pipe_path = String::from("test_out");
         let mut output = PipeWriterWrapper::new(output_pipe_path).unwrap();
         let res = output.write(&write_buffer);
         assert!(res.is_ok());

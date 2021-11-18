@@ -59,7 +59,7 @@ use devices::virtio::block::{self, BlockArgs};
 use devices::virtio::net::{self, NetArgs};
 use devices::virtio::{Env, MmioConfig};
 
-use devices::legacy::{ConsoleReaderWrapper, ConsoleWriterWrapper, EventFdTrigger, SerialWrapper};
+use devices::legacy::{ConsoleWrapper, EventFdTrigger, SerialWrapper};
 use vm_vcpu::vcpu::VcpuState;
 use vm_vcpu::vm::{self, ExitHandler, KvmVm, VmState};
 #[cfg(target_arch = "x86_64")]
@@ -104,6 +104,9 @@ pub const DEFAULT_KERNEL_CMDLINE: &str = "i8042.nokbd reboot=t panic=1 pci=off";
 #[cfg(target_arch = "aarch64")]
 /// Default kernel command line.
 pub const DEFAULT_KERNEL_CMDLINE: &str = "reboot=t panic=1 pci=off";
+
+/// Default console type (STDIN/STDOUT)
+pub const DEFAULT_CONSOLE_TYPE: &str = "standard";
 
 /// VMM memory related errors.
 #[derive(Debug)]
@@ -446,13 +449,12 @@ impl Vmm {
         let serial;
         let interrupt_evt = EventFdTrigger::new(libc::EFD_NONBLOCK).map_err(Error::IO)?;
 
-        let input = ConsoleReaderWrapper::new(self.serial_config.serial_input.clone());
-        let output = ConsoleWriterWrapper::new(self.serial_config.serial_output.clone());
+        let console_wrapper = ConsoleWrapper::new(self.serial_config.serial_input.clone(), self.serial_config.serial_output.clone(), self.serial_config.serial_type.unwrap().clone());
 
-        let out_writer: Box<dyn Write + Send> = Box::new(output);
+        let out_writer: Box<dyn Write + Send> = Box::new(console_wrapper.writer);
         serial = Arc::new(Mutex::new(SerialWrapper {
             serial: Serial::new(interrupt_evt.try_clone().map_err(Error::IO)?, out_writer),
-            console_reader: input,
+            console_reader: console_wrapper.reader,
         }));
 
         // Register its interrupt fd with KVM. IRQ line 4 is typically used for serial port 1.

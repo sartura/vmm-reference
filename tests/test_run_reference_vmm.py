@@ -86,7 +86,7 @@ and run locally.
 """
 
 
-def start_vmm_process(kernel_path, disk_path=None, num_vcpus=1, mem_size_mib=1024, serial_in="", serial_out=""):
+def start_vmm_process(kernel_path, disk_path=None, num_vcpus=1, mem_size_mib=1024, serial_in="", serial_out="", serial_type=""):
     # Kernel config
     cmdline = "console=ttyS0 i8042.nokbd reboot=t panic=1 pci=off"
 
@@ -103,9 +103,9 @@ def start_vmm_process(kernel_path, disk_path=None, num_vcpus=1, mem_size_mib=102
         ),
         "--vcpu", "num={}".format(num_vcpus),
     ]
-    if serial_in != "" and serial_out != "":
+    if serial_in != "" and serial_out != "" and serial_type != "":
         vmm_cmd.append("--serial")
-        vmm_cmd.append("serial_input={},serial_output={}".format(serial_in, serial_out))
+        vmm_cmd.append("serial_type={},serial_input={},serial_output={}".format(serial_type, serial_in, serial_out))
 
     tmp_file_path = None
 
@@ -383,7 +383,8 @@ def test_serial_console_piping(kernel, tmp_path):
     vmm_process, _ = start_vmm_process(
                         kernel,
                         serial_in=pipe_dir/"in",
-                        serial_out=pipe_dir/"out")
+                        serial_out=pipe_dir/"out",
+                        serial_type="pipe")
 
     time.sleep(1)
 
